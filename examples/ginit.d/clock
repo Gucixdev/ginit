@@ -1,0 +1,5 @@
+# a one-shot: runs to the end, then counts as started; the stop command runs on stop
+type = scripted
+command = date
+stop-command = true
+logfile = clock.log

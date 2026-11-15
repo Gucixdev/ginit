@@ -1,0 +1,4 @@
+# the service started when ginit gets no name on the command line
+type = internal
+depends-on = database
+waits-for = clock

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# run - build ginit, run every test, then show it working on the example services. No arguments.
+# Everything happens in user mode on a socket in a temp directory; nothing is touched on the system.
+set -u
+cd "$(dirname "$0")" || exit 2
+
+echo "== build"
+make || exit 2
+
+echo "== tests"
+make test || exit 1
+
+echo "== example: boot the services in examples/ginit.d, ask about them, shut down"
+tmp=$(mktemp -d)
+trap 'kill "$pid" 2> /dev/null; wait 2> /dev/null; rm -rf -- "$tmp"' EXIT
+export GINIT_SOCKET=$tmp/sock
+(cd "$tmp" && "$OLDPWD/build/ginit" -d "$OLDPWD/examples/ginit.d" -q) &
+pid=$!
+for _ in $(seq 100); do build/ginitctl ping > /dev/null 2>&1 && break; sleep 0.05; done
+sleep 0.3
+build/ginitctl list
+echo "-- ginitctl stop database (boot depends on it, so boot stops too)"
+build/ginitctl stop database
+build/ginitctl list
+build/ginitctl shutdown

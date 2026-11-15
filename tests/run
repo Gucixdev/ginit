@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+# tests/run - drive a real ginit in user mode: services are real processes (sleep, sh), the daemon runs on a socket
+# in a temp directory, nothing touches the system. Usage: tests/run [PATH-TO-ginit]   (default build/ginit)
+set -u
+cd "$(dirname "$0")/.." || exit 2
+GINIT=$(readlink -f "${1:-build/ginit}")
+[ -x "$GINIT" ] || { echo "tests/run: $GINIT is not built (make)" >&2; exit 2; }
+
+T=$(mktemp -d "${TMPDIR:-/tmp}/ginit-test.XXXXXX")
+S=$T/svc
+mkdir -p "$S"
+ln -s "$GINIT" "$T/ginitctl"
+export GINIT_SOCKET=$T/sock GINIT_SERVICE_DIR=$S
+ctl=$T/ginitctl
+pass=0 fail=0 daemon=0
+
+cleanup() {
+	[ "$daemon" -gt 0 ] && kill "$daemon" 2> /dev/null
+	wait 2> /dev/null
+	rm -rf -- "$T"
+}
+trap cleanup EXIT
+
+ok() { pass=$((pass + 1)); }
+bad() { fail=$((fail + 1)); echo "FAIL: $*"; }
+check() { # check DESCRIPTION CONDITION-COMMAND...
+	local d=$1
+	shift
+	if "$@" > /dev/null 2>&1; then ok; else bad "$d"; fi
+}
+eq() { if [ "$2" = "$3" ]; then ok; else bad "$1: wanted '$3', got '$2'"; fi; }
+
+svc() { printf '%s\n' "${@:2}" > "$S/$1"; }
+
+# state of a service: started, stopped, failed, starting, stopping
+state() { "$ctl" status "$1" 2> /dev/null | sed 's/^[^:]*: \([a-z]*\).*/\1/'; }
+pid_of() { "$ctl" status "$1" 2> /dev/null | sed -n 's/.*(pid \([0-9]*\)).*/\1/p'; }
+waitfor() { # waitfor SERVICE STATE [SECONDS]
+	local i n=$(( ${3:-5} * 20 ))
+	for ((i = 0; i < n; i++)); do
+		[ "$(state "$1")" = "$2" ] && return 0
+		sleep 0.05
+	done
+	return 1
+}
+
+boot() { # boot [service...]: start the daemon fresh
+	[ "$daemon" -gt 0 ] && { "$ctl" shutdown > /dev/null 2>&1; wait "$daemon" 2> /dev/null; daemon=0; }
+	"$GINIT" -q "$@" > "$T/daemon.log" 2>&1 &
+	daemon=$!
+	local i
+	for ((i = 0; i < 100; i++)); do
+		"$ctl" ping > /dev/null 2>&1 && return 0
+		sleep 0.05
+	done
+	bad "daemon did not come up: $(cat "$T/daemon.log")"
+}
+
+echo "== no daemon"
+"$ctl" list > /dev/null 2>&1; eq "ctl without a daemon exits 3" "$?" 3
+"$ctl" > /dev/null 2>&1; eq "ctl without a command exits 2" "$?" 2
+
+echo "== start order and stop order"
+TRACE=$T/trace
+svc db "type = process" "command = sh -c 'echo db-up >> $TRACE; exec sleep 300'"
+svc cache "type = process" "command = sh -c 'echo cache-up >> $TRACE; exec sleep 300'" "depends-on = db"
+svc web "type = process" "command = sh -c 'echo web-up >> $TRACE; exec sleep 300'" "depends-on = cache" "waits-for = db"
+boot
+"$ctl" start web > /dev/null; eq "start web" "$?" 0
+eq "dependencies start first" "$(tr '\n' ' ' < "$TRACE")" "db-up cache-up web-up "
+eq "db is started by the dependency" "$(state db)" started
+"$ctl" stop db > /dev/null; eq "stop db" "$?" 0
+eq "the dependents stop with it: cache" "$(state cache)" stopped
+eq "the dependents stop with it: web" "$(state web)" stopped
+"$ctl" start db > /dev/null
+"$ctl" start cache > /dev/null
+eq "start after stop: db again" "$(state db)" started
+eq "web stays down" "$(state web)" stopped
+"$ctl" stop cache > /dev/null
+eq "stopping cache leaves db (a command started it)" "$(state db)" started
+
+echo "== a dependency that is not needed any more stops"
+"$ctl" stop db > /dev/null
+"$ctl" start web > /dev/null
+"$ctl" stop web > /dev/null
+eq "web stopped" "$(state web)" stopped
+eq "cache is not needed: stopped" "$(state cache)" stopped
+eq "db is not needed: stopped" "$(state db)" stopped
+
+echo "== failures"
+svc bad "type = scripted" "command = false"
+svc needsbad "type = process" "command = sleep 300" "depends-on = bad"
+svc softbad "type = process" "command = sleep 300" "waits-for = bad"
+svc nocmd "type = process"
+svc nosuchexec "type = process" "command = /nonexistent/program"
+svc badkey "type = process" "command = true" "run-as = root"
+svc cyc1 "type = internal" "depends-on = cyc2"
+svc cyc2 "type = internal" "depends-on = cyc1"
+"$ctl" start bad > /dev/null 2>&1; eq "a failing start command: exit 1" "$?" 1
+eq "it shows as failed" "$(state bad)" failed
+"$ctl" start needsbad > /dev/null 2>&1; eq "dependent of a failed service fails" "$?" 1
+eq "dependent not running" "$(state needsbad)" failed
+"$ctl" start softbad > /dev/null 2>&1; eq "waits-for a failing service still starts" "$?" 0
+eq "soft dependent started" "$(state softbad)" started
+"$ctl" start nosuch > "$T/out" 2>&1; eq "no such service: exit 1" "$?" 1
+check "it says so" grep -q "no such service" "$T/out"
+"$ctl" start nocmd > "$T/out" 2>&1; eq "a process without command is refused" "$?" 1
+check "and says what" grep -q "needs a command" "$T/out"
+"$ctl" start nosuchexec > "$T/out" 2>&1; eq "a program that is not there fails the start" "$?" 1
+"$ctl" start badkey > "$T/out" 2>&1; eq "an unsupported key is refused" "$?" 1
+check "with the key and line" grep -q "run-as.*line 3" "$T/out"
+"$ctl" start cyc1 > "$T/out" 2>&1; eq "a dependency cycle is refused" "$?" 1
+check "named as a cycle" grep -q cycle "$T/out"
+"$ctl" start ../etc/passwd > /dev/null 2>&1; eq "a path as a name is refused" "$?" 1
+"$ctl" stop softbad > /dev/null
+
+echo "== restart policy"
+svc flaky "type = process" "command = sleep 300" "restart = yes" "restart-delay = 0.1"
+boot
+"$ctl" start flaky > /dev/null
+p1=$(pid_of flaky)
+kill -9 "$p1"
+waitfor flaky started 3
+p2=$(pid_of flaky)
+check "restarted with a new pid" test -n "$p2" -a "$p2" != "$p1"
+svc once "type = process" "command = sh -c 'exit 0'" "restart = on-failure"
+"$ctl" start once > /dev/null 2>&1; sleep 0.5
+eq "on-failure does not restart a clean exit" "$(state once)" stopped
+svc crashy "type = process" "command = sh -c 'exit 3'" "restart = yes" "restart-delay = 0.05" "restart-limit-count = 3" "restart-limit-interval = 30"
+"$ctl" start crashy > /dev/null 2>&1
+waitfor crashy failed 5; eq "restarts run out and it is failed" "$(state crashy)" failed
+"$ctl" restart flaky > /dev/null; eq "restart command" "$?" 0
+p3=$(pid_of flaky)
+check "restart gives a new process" test -n "$p3" -a "$p3" != "$p2"
+
+echo "== bgprocess with a pid file"
+svc daemonish "type = bgprocess" "command = sh -c 'sleep 300 & echo \$! > $T/bg.pid'" "pid-file = $T/bg.pid"
+boot
+"$ctl" start daemonish > /dev/null; eq "bgprocess start" "$?" 0
+bgpid=$(pid_of daemonish)
+eq "the pid comes from the file" "$bgpid" "$(cat "$T/bg.pid")"
+"$ctl" stop daemonish > /dev/null; eq "bgprocess stop" "$?" 0
+check "the process is gone" bash -c "! kill -0 $bgpid"
+
+echo "== scripted with a stop command"
+svc scr "type = scripted" "command = sh -c 'echo on >> $T/scr'" "stop-command = sh -c 'echo off >> $T/scr'"
+boot
+"$ctl" start scr > /dev/null; "$ctl" stop scr > /dev/null
+eq "start and stop commands both ran" "$(tr '\n' ' ' < "$T/scr")" "on off "
+
+echo "== stop timeout"
+svc stubborn "type = process" "command = sh -c 'trap \"\" TERM; while :; do sleep 1; done'" "stop-timeout = 1"
+boot
+"$ctl" start stubborn > /dev/null
+sp=$(pid_of stubborn)
+t0=$(date +%s)
+"$ctl" stop stubborn > /dev/null; eq "stop returns" "$?" 0
+t1=$(date +%s)
+check "it took the timeout, not forever" test $((t1 - t0)) -le 4
+check "the process is gone" bash -c "! kill -0 $sp"
+
+echo "== file settings"
+printf 'GREETING=hello world\n# comment\nOTHER=2\n' > "$T/env"
+svc envy "type = scripted" "command = sh -c 'echo \"\$GREETING|\$OTHER|\$(pwd)\"'" "env-file = $T/env" "working-directory = $T" "logfile = $T/envy.log"
+boot
+"$ctl" start envy > /dev/null
+eq "env-file, working-directory, logfile" "$(cat "$T/envy.log")" "hello world|2|$T"
+svc quoted "type = scripted" "command = sh -c 'printf \"%s,%s\" \"a b\" c > $T/q'  # a comment" 
+"$ctl" start quoted > /dev/null
+eq "quotes group words, a trailing comment is dropped" "$(cat "$T/q")" "a b,c"
+svc plus "type = scripted" "command = printf" "command += x%sy" "command += z"
+"$ctl" start plus > /dev/null; eq "+= appends words" "$?" 0
+
+echo "== several clients and no-wait"
+svc slow "type = scripted" "command = sleep 1"
+boot
+"$ctl" start -n slow > /dev/null; eq "start -n returns at once" "$?" 0
+eq "and it is starting" "$(state slow)" starting
+"$ctl" start slow > /dev/null & w1=$!
+"$ctl" start slow > /dev/null & w2=$!
+wait $w1; eq "waiting client 1 answered" "$?" 0
+wait $w2; eq "waiting client 2 answered" "$?" 0
+eq "slow is started" "$(state slow)" started
+svc slowfail "type = scripted" "command = sleep 30" "start-timeout = 1"
+t0=$(date +%s)
+"$ctl" start slowfail > /dev/null 2>&1; eq "start timeout fails the start" "$?" 1
+t1=$(date +%s)
+check "after about a second" test $((t1 - t0)) -le 4
+
+echo "== boot services and shutdown"
+svc boot "type = internal" "waits-for = db" "depends-on = cache"
+boot
+waitfor boot started 3; eq "the default service boot is started" "$(state boot)" started
+eq "with its dependencies" "$(state cache)" started
+"$ctl" shutdown > /dev/null; eq "shutdown answers" "$?" 0
+wait "$daemon" 2> /dev/null; daemon=0
+check "the socket is removed" test ! -e "$T/sock"
+check "no service process is left" bash -c "! pgrep -P 1 -fx 'sleep 300' | grep -q ."
+
+echo "== second daemon and stale socket"
+boot
+"$GINIT" -q > "$T/second.log" 2>&1; eq "a second daemon on the same socket is refused" "$?" 1
+check "and says why" grep -q "another ginit" "$T/second.log"
+strays="$(pid_of db) $(pid_of cache)"
+kill -9 "$daemon"; wait "$daemon" 2> /dev/null; daemon=0
+kill $strays 2> /dev/null     # a daemon killed with SIGKILL cannot stop its services
+boot
+"$ctl" ping > /dev/null; eq "a stale socket file is replaced" "$?" 0
+
+echo
+echo "$pass passed, $fail failed"
+[ "$fail" -eq 0 ]
