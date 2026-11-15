@@ -3,7 +3,7 @@
 A small init and service manager that reads **dinit service files**, written in C89 with no dependency beyond libc.
 `ginit` is the daemon, `ginitctl` (also callable as `dinitctl`) controls it. One static arena, no malloc, about 2000 lines.
 
-**Status:** works as a user-level service manager and passes its tests (61 checks, also under ASan and UBSan). It has
+**Status:** works as a user-level service manager and passes its tests (65 checks, also under ASan and UBSan). It has
 **not been run as PID 1 on a real machine**: the reaping, final signal and `reboot(2)` paths are written but untested.
 Do not point a boot loader at it yet without a rescue entry.
 
@@ -69,3 +69,7 @@ tests/run       drives a real daemon in user mode on a temp socket
 
 Not done: socket activation, run-as, cgroups, `reload`, `enable`/`disable`, service environment commands, a boot
 sequence for a real system (mounting is the job of a scripted `boot` service you write).
+
+## More
+
+- [docs/bench.md](docs/bench.md): `./bench` results (start of 500 services in about 150 ms, memory, graph size) and what they found

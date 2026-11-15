@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+# bench - measure ginit and append the tables to docs/bench.md. No arguments.
+# Everything runs in user mode on a socket in a private temp directory; no service is installed, /etc is not touched.
+#   up/down   a daemon is started on N services, time until `ginitctl start boot` returns (all up), then `stop boot`
+#   scripted  N one-shot services running /bin/true: fork, exec, reap, mark started
+#   graph     only `type = internal` services (no process): parse, cycle check, want and settle passes; tree and chain
+#   memory    VmRSS of the daemon with N running services
+# Stock build is limited to 512 services (GI_MAXSVC); sizes above that use a copy of the source in the temp
+# directory with GI_MAXSVC raised, the repository is not changed. Each cell: 1 warm-up run, then RUNS timed runs.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+RUNS=${RUNS:-7}   # environment only for quick trials; the numbers in docs/bench.md use the default
+
+for tool in make gcc sort awk mktemp; do command -v "$tool" > /dev/null || { echo "bench: $tool not found" >&2; exit 2; }; done
+make > /dev/null
+root=$PWD
+T=$(mktemp -d "${TMPDIR:-/tmp}/ginit-bench.XXXXXX")
+mkdir -p "$T/svc"
+sock=$T/sock
+pid=0
+cleanup() {
+	if [ "$pid" -gt 0 ] && kill -0 "$pid" 2> /dev/null; then
+		GINIT_SOCKET=$sock timeout 5 "$T/ginitctl" shutdown > /dev/null 2>&1 || true
+		sleep 0.2
+		kill "$pid" 2> /dev/null || true
+	fi
+	wait 2> /dev/null || true
+	rm -rf -- "$T"
+}
+trap cleanup EXIT
+
+stock=$root/build/ginit
+# raised-limit copy for the big sizes
+cp -r src "$T/src"
+sed -i 's/#define GI_MAXSVC 512/#define GI_MAXSVC 4096/' "$T/src/base.h"
+gcc -std=c89 -pedantic -Wall -Wextra -Werror -O2 "$T/src/main.c" -o "$T/ginit-big"
+ln -s "$stock" "$T/ginitctl"
+ctl=$T/ginitctl
+sleep_bin=$(type -P sleep)
+true_bin=$(type -P true)
+
+now_us() { local t=$EPOCHREALTIME; echo $((${t/./} + 0)); }
+
+# stats V... -> "median min max" (milliseconds, input in microseconds)
+stats() {
+	printf '%s\n' "$@" | sort -n | awk '{ v[NR] = $1 }
+		END { m = (NR % 2) ? v[(NR + 1) / 2] : (v[NR / 2] + v[NR / 2 + 1]) / 2; printf "%.1f %.1f %.1f", m / 1000, v[1] / 1000, v[NR] / 1000 }'
+}
+
+# gen_tree DIR LEAVES FAN LINE... : leaves with the given lines, internal groups of FAN above them, root named boot
+gen_tree() {
+	local d=$1 leaves=$2 fan=$3 i j lvl=0 count prev next name
+	shift 3
+	rm -rf "$d"
+	mkdir -p "$d"
+	for ((i = 0; i < leaves; i++)); do printf '%s\n' "$@" > "$d/l$i"; done
+	count=$leaves
+	prev=l
+	while :; do
+		next=$(((count + fan - 1) / fan))
+		for ((i = 0; i < next; i++)); do
+			if [ "$next" -eq 1 ]; then name=boot; else name=g${lvl}_$i; fi
+			{
+				echo "type = internal"
+				for ((j = i * fan; j < count && j < (i + 1) * fan; j++)); do echo "depends-on = $prev$j"; done
+			} > "$d/$name"
+		done
+		[ "$next" -eq 1 ] && break
+		prev=g${lvl}_
+		count=$next
+		lvl=$((lvl + 1))
+	done
+	ls "$d" | wc -l
+}
+
+# gen_chain DIR N : boot -> s1 -> ... -> s(N-1), all internal
+gen_chain() {
+	local d=$1 n=$2 i
+	rm -rf "$d"
+	mkdir -p "$d"
+	for ((i = 0; i < n; i++)); do
+		{
+			echo "type = internal"
+			if [ "$i" -lt $((n - 1)) ]; then echo "depends-on = s$((i + 1))"; fi
+		} > "$d/s$i"
+	done
+	mv "$d/s0" "$d/boot"
+	ls "$d" | wc -l
+}
+
+# one_run BIN DIR : sets UP_US DOWN_US RSS_KB; the daemon is started on boot at t0
+one_run() {
+	local bin=$1 dir=$2 t0 t1 t2 t3 rc n=0 loaded
+	export GINIT_SOCKET=$sock
+	rm -f "$sock"
+	t0=$(now_us)
+	"$bin" -q -d "$dir" -p "$sock" boot > /dev/null 2>&1 &
+	pid=$!
+	while :; do
+		rc=0
+		"$ctl" start boot > /dev/null 2>&1 || rc=$?
+		[ "$rc" -ne 3 ] && break
+		n=$((n + 1))
+		[ "$n" -gt 20000 ] && { echo "bench: daemon never came up" >&2; return 1; }
+	done
+	t1=$(now_us)
+	[ "$rc" -eq 0 ] || { echo "bench: ginitctl start boot returned $rc" >&2; return 1; }
+	loaded=$("$ctl" list 2> /dev/null | wc -l)
+	if [ "$loaded" -ne "$WANT_SVC" ]; then echo "bench: $loaded services loaded, expected $WANT_SVC" >&2; return 1; fi
+	RSS_KB=$(awk '/^VmRSS/ { print $2 }' "/proc/$pid/status")
+		t2=$(now_us)
+	"$ctl" stop boot > /dev/null 2>&1 || true
+	t3=$(now_us)
+	"$ctl" shutdown > /dev/null 2>&1 || true
+	wait "$pid" 2> /dev/null || true
+	pid=0
+	UP_US=$((t1 - t0))
+	DOWN_US=$((t3 - t2))
+}
+
+# cell BIN DIR : warm-up + RUNS runs; sets UP="med min max", DOWN=..., RSS="med min max" (kB, scaled by 1000 for stats)
+cell() {
+	local bin=$1 dir=$2 i ups=() downs=() rss=()
+	one_run "$bin" "$dir" || return 1
+	for ((i = 0; i < RUNS; i++)); do
+		one_run "$bin" "$dir" || return 1
+		ups+=("$UP_US")
+		downs+=("$DOWN_US")
+		rss+=("$((RSS_KB * 1000))")
+	done
+	UP=$(stats "${ups[@]}")
+	DOWN=$(stats "${downs[@]}")
+	RSS=$(stats "${rss[@]}")
+}
+
+out=docs/bench.md
+commit=$(git rev-parse --short HEAD 2> /dev/null || echo unknown)
+dirty=""
+[ -z "$(git status --porcelain src 2> /dev/null)" ] || dirty=" (uncommitted changes in src)"
+cpu=$(sed -n 's/^model name[^:]*: *//p' /proc/cpuinfo | head -1)
+load_start=$(cut -d' ' -f1-3 /proc/loadavg)
+rpt=$T/report
+{
+	printf '\n## %s, commit %s%s\n\n' "$(date +%F)" "$commit" "$dirty"
+	printf 'machine: %s, %s threads, %s; %s; shared with the owner'"'"'s editors\n' "$cpu" "$(nproc)" "$(uname -sr)" "$(gcc --version | head -1)"
+	printf 'load average at start: %s; each cell: 1 warm-up run, then %s runs; values are median [min..max]\n' "$load_start" "$RUNS"
+	printf 'command: `./bench` (builds with `make`, gcc -std=c89 -O2; sizes above 512 services use a GI_MAXSVC=4096 copy in a temp dir)\n'
+} > "$rpt"
+
+{
+	echo
+	echo '### Start and stop of running processes (`sleep`), time until `ginitctl start boot` returns / `stop boot` returns'
+	echo
+	echo '| shape | services (total) | processes | up ms | down ms | VmRSS kB |'
+	echo '|---|---|---|---|---|---|'
+} >> "$rpt"
+for leaves in 8 90 475; do
+	total=$(gen_tree "$T/svc" "$leaves" 20 "type = process" "command = $sleep_bin 120")
+	WANT_SVC=$total cell "$stock" "$T/svc"
+	printf '| tree, fan 20 | %s | %s | %s [%s..%s] | %s [%s..%s] | %s [%s..%s] |\n' "$total" "$leaves" $UP $DOWN $RSS >> "$rpt"
+done
+
+{
+	echo
+	echo '### Reaping: one-shot `scripted` services running `true` (fork, exec, exit, waitpid, mark started)'
+	echo
+	echo '| services (total) | one-shots | up ms | one-shots per second (median) |'
+	echo '|---|---|---|---|'
+} >> "$rpt"
+for leaves in 8 90 475; do
+	total=$(gen_tree "$T/svc" "$leaves" 20 "type = scripted" "command = $true_bin")
+	WANT_SVC=$total cell "$stock" "$T/svc"
+	med=${UP%% *}
+	printf '| %s | %s | %s [%s..%s] | %s |\n' "$total" "$leaves" $UP "$(awk -v n="$leaves" -v ms="$med" 'BEGIN { printf "%.0f", n / (ms / 1000) }')" >> "$rpt"
+done
+# reference: the same number of fork+exec+wait from a bash loop
+ref=()
+for ((i = 0; i < RUNS + 1; i++)); do
+	t0=$(now_us)
+	for ((j = 0; j < 475; j++)); do "$true_bin"; done
+	t1=$(now_us)
+	[ "$i" -gt 0 ] && ref+=("$((t1 - t0))")
+done
+printf '\nreference, a bash loop running `%s` 475 times one after the other: %s ms (median min max)\n' "$true_bin" "$(stats "${ref[@]}")" >> "$rpt"
+
+{
+	echo
+	echo '### Graph: only `type = internal` services (parse, cycle check, want and settle passes, no process); up ms'
+	echo
+	echo '| shape | services | build | up ms | microseconds per service (median) |'
+	echo '|---|---|---|---|---|'
+} >> "$rpt"
+graph_row() { # shape total build
+	WANT_SVC=$2 cell "$bin" "$T/svc"
+	printf '| %s | %s | %s | %s [%s..%s] | %s |\n' "$1" "$2" "$3" $UP "$(awk -v n="$2" -v ms="${UP%% *}" 'BEGIN { printf "%.0f", ms * 1000 / n }')" >> "$rpt"
+}
+for leaves in 90 225 450; do
+	bin=$stock
+	total=$(gen_tree "$T/svc" "$leaves" 10 "type = internal")
+	graph_row "tree, fan 10" "$total" "stock"
+done
+for leaves in 900 1800; do
+	bin=$T/ginit-big
+	total=$(gen_tree "$T/svc" "$leaves" 10 "type = internal")
+	graph_row "tree, fan 10" "$total" "limit 4096"
+done
+for n in 100 250 500; do
+	bin=$stock
+	gen_chain "$T/svc" "$n" > /dev/null
+	graph_row "chain" "$n" "stock"
+done
+for n in 1000 2000; do
+	bin=$T/ginit-big
+	gen_chain "$T/svc" "$n" > /dev/null
+	graph_row "chain" "$n" "limit 4096"
+done
+
+{
+	echo
+	echo '### Limit of the stock build'
+	echo
+} >> "$rpt"
+limit_total=$(gen_tree "$T/svc" 600 10 "type = internal")
+export GINIT_SOCKET=$sock
+rm -f "$sock"
+"$stock" -d "$T/svc" -p "$sock" boot > "$T/limit.log" 2>&1 &
+pid=$!
+sleep 0.5
+rc=0
+"$ctl" start boot > "$T/limit.ctl" 2>&1 || rc=$?
+"$ctl" shutdown > /dev/null 2>&1 || true
+wait "$pid" 2> /dev/null || true
+pid=0
+printf '%s internal services (600 leaves): `ginitctl start boot` exit code %s, daemon says: `%s`, ginitctl says: `%s`\n' "$limit_total" "$rc" "$(head -c 200 "$T/limit.log" | tr '\n' ' ')" "$(head -c 200 "$T/limit.ctl" | tr '\n' ' ')" >> "$rpt"
+
+printf 'load average at end: %s\n' "$(cut -d' ' -f1-3 /proc/loadavg)" >> "$rpt"
+mkdir -p docs
+if [ ! -s "$out" ]; then
+	printf '# ginit benchmarks\n\nAppended by `./bench`. Interpretation and anything wrong that the numbers show is under Findings.\n\n## Findings\n\n(none yet)\n\n## Results log\n' > "$out"
+fi
+cat "$rpt" >> "$out"
+cat "$rpt"
