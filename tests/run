@@ -62,12 +62,14 @@ echo "== no daemon"
 
 echo "== start order and stop order"
 TRACE=$T/trace
-svc db "type = process" "command = sh -c 'echo db-up >> $TRACE; exec sleep 300'"
-svc cache "type = process" "command = sh -c 'echo cache-up >> $TRACE; exec sleep 300'" "depends-on = db"
-svc web "type = process" "command = sh -c 'echo web-up >> $TRACE; exec sleep 300'" "depends-on = cache" "waits-for = db"
+svc db "type = process" "command = sh -c 'echo db-up \$\$ >> $TRACE; exec sleep 300'"
+svc cache "type = process" "command = sh -c 'echo cache-up \$\$ >> $TRACE; exec sleep 300'" "depends-on = db"
+svc web "type = process" "command = sh -c 'echo web-up \$\$ >> $TRACE; exec sleep 300'" "depends-on = cache" "waits-for = db"
 boot
 "$ctl" start web > /dev/null; eq "start web" "$?" 0
-eq "dependencies start first" "$(tr '\n' ' ' < "$TRACE")" "db-up cache-up web-up "
+# the shells write their line when they get to run, in any order after start returned; ginit forks them in dependency order, so the pids give the order
+for ((i = 0; i < 100 && $(wc -l < "$TRACE" 2> /dev/null || echo 0) < 3; i++)); do sleep 0.05; done
+eq "dependencies start first" "$(sort -k2n "$TRACE" | cut -d' ' -f1 | tr '\n' ' ')" "db-up cache-up web-up "
 eq "db is started by the dependency" "$(state db)" started
 "$ctl" stop db > /dev/null; eq "stop db" "$?" 0
 eq "the dependents stop with it: cache" "$(state cache)" stopped
