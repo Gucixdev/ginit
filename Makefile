@@ -23,6 +23,7 @@ test: build/ginit
 	$(CC) $(STD) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined src/main.c -o build/ginit-san
 	ASAN_OPTIONS=detect_leaks=0 tests/run build/ginit-san
 	tests/run build/ginit
+	sh tests/pid1
 
 install: build/ginit
 	install -d $(DESTDIR)$(PREFIX)/bin

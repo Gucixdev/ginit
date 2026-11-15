@@ -4,7 +4,8 @@ A small init and service manager that reads **dinit service files**, written in 
 `ginit` is the daemon, `ginitctl` (also callable as `dinitctl`) controls it. One static arena, no malloc, about 2000 lines.
 
 **Status:** works as a user-level service manager and passes its tests (65 checks, also under ASan and UBSan). It has
-**not been run as PID 1 on a real machine**: the reaping, final signal and `reboot(2)` paths are written but untested.
+**not been run as PID 1 on a real machine**. `tests/pid1` runs it as PID 1 in a private user and pid namespace: orphans are
+reaped and the shutdown path starts; the final `reboot(2)` call is refused there and stays untested.
 Do not point a boot loader at it yet without a rescue entry.
 
 ## Use
