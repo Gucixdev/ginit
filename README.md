@@ -1,7 +1,7 @@
 # ginit
 
 A small init and service manager that reads **dinit service files**, written in C89 with no dependency beyond libc.
-`ginit` is the daemon, `ginitctl` (also callable as `dinitctl`) controls it. One static arena, no malloc, about 1700 lines.
+`ginit` is the daemon, `ginitctl` (also callable as `dinitctl`) controls it. One static arena, no malloc, about 2000 lines.
 
 **Status:** works as a user-level service manager and passes its tests (61 checks, also under ASan and UBSan). It has
 **not been run as PID 1 on a real machine**: the reaping, final signal and `reboot(2)` paths are written but untested.
