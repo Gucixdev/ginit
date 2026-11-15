@@ -505,8 +505,8 @@ static int gi_edge(int *list, int *n, int to)
 }
 
 /* Load NAME and everything it names, resolve the names to indices. Returns the index, or -1 with gi_load_err set.
- * On failure the services loaded for this call stay loaded (they parsed fine) but the failing one is not added. */
-static int gi_load(const char *name)
+ * On failure nothing stays loaded from this call (see gi_load): a half-resolved service must not be found by name later. */
+static int gi_load_graph(const char *name)
 {
     int idx = gi_lookup(name), start, i, j, t;
     Raw *R;
@@ -561,6 +561,33 @@ static int gi_load(const char *name)
         }
     }
     return idx;
+}
+
+/* gi_load_graph, and when it fails drop every service it loaded: their dependency lists may be cut short, and a later
+ * start of the same name would otherwise find the half-resolved service and start it without the missing dependency.
+ * The only edges from older services into the dropped ones are "before" entries in their after lists. */
+static int gi_load(const char *name)
+{
+    int start = gi_nsvc, i, j, k;
+    int r = gi_load_graph(name);
+
+    if (r >= 0) {
+        return r;
+    }
+    for (i = 0; i < start; i++) {
+        for (j = 0, k = 0; j < gi_svc[i].nafter; j++) {
+            if (gi_svc[i].after[j] < start) {
+                gi_svc[i].after[k++] = gi_svc[i].after[j];
+            }
+        }
+        gi_svc[i].nafter = k;
+    }
+    for (i = start; i < gi_nsvc; i++) {
+        memset(&gi_svc[i], 0, sizeof(Svc));
+        memset(&gi_raw[i], 0, sizeof(Raw));
+    }
+    gi_nsvc = start;
+    return -1;
 }
 
 /* k-th edge of svc n over every kind that makes one service wait for another; -1 past the end */

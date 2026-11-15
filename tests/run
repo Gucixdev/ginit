@@ -109,6 +109,12 @@ check "and says what" grep -q "needs a command" "$T/out"
 "$ctl" start nosuchexec > "$T/out" 2>&1; eq "a program that is not there fails the start" "$?" 1
 "$ctl" start badkey > "$T/out" 2>&1; eq "an unsupported key is refused" "$?" 1
 check "with the key and line" grep -q "run-as.*line 3" "$T/out"
+svc halfdep "type = internal" "depends-on = ok1" "depends-on = nosuch"
+svc ok1 "type = internal"
+"$ctl" start halfdep > "$T/out" 2>&1; eq "a missing hard dependency refuses the start" "$?" 1
+"$ctl" start halfdep > "$T/out" 2>&1; eq "and refuses it again, the half-loaded service is not kept" "$?" 1
+check "naming the missing service" grep -q "nosuch" "$T/out"
+eq "the dependency that did load is not started either" "$(state ok1)" stopped
 "$ctl" start cyc1 > "$T/out" 2>&1; eq "a dependency cycle is refused" "$?" 1
 check "named as a cycle" grep -q cycle "$T/out"
 "$ctl" start ../etc/passwd > /dev/null 2>&1; eq "a path as a name is refused" "$?" 1
