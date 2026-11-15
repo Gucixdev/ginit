@@ -1,0 +1,4 @@
+# boot the GRUB entry titled Rescue once, then fall back to the default; the title is yours to edit
+type = scripted
+command = grub-reboot --boot-directory=/boot Rescue
+depends-on = local-fs

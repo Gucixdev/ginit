@@ -215,6 +215,59 @@ kill $strays 2> /dev/null     # a daemon killed with SIGKILL cannot stop its ser
 boot
 "$ctl" ping > /dev/null; eq "a stale socket file is replaced" "$?" 0
 
+echo "== ginit -c (check mode)"
+CK=$T/check; mkdir -p "$CK"
+printf '%s\n' "type = process" "command = x" "depends-on = b" > "$CK/a"
+printf '%s\n' "type = process" "command = x" "depends-on = a" "waits-for = ghost" > "$CK/b"
+printf '%s\n' "type = process" "command = x" "run-as = root" > "$CK/c"
+out=$("$GINIT" -c -d "$CK" 2>&1); eq "check exits 1 on errors" "$?" 1
+check "reports the cycle" grep -q "error: a: dependency cycle" <<< "$out"
+check "reports the refused key with its line" grep -q "error: c: .*run-as (line 3)" <<< "$out"
+check "a missing soft dependency is only a note" grep -q "note: b: waits-for ghost" <<< "$out"
+out=$("$GINIT" -c -d "$CK" c 2>&1); eq "named check: one bad service" "$?" 1
+printf '%s\n' "type = process" "command = x" > "$CK/b"
+rm -f "$CK/c"
+printf '%s\n' "type = process" "command = x" > "$CK/a"
+out=$("$GINIT" -c -d "$CK" 2>&1); eq "check exits 0 when clean" "$?" 0
+check "counts the services" grep -q "^2 services checked, no errors" <<< "$out"
+"$GINIT" -c -d examples/system > "$T/sys.log" 2>&1; eq "the shipped examples/system set is clean" "$?" 0
+check "and has no notes" bash -c "! grep -q '^note:' '$T/sys.log'"
+
+echo "== examples/system with stand-in commands"
+SY=$T/sys; mkdir -p "$SY"
+for f in examples/system/*; do
+	n=$(basename "$f")
+	awk '
+		/^type *= *process/ { proc = 1 }
+		/^(command|stop-command) *=/ { next }
+		/^(start-timeout|restart|restart-delay|options) *=/ { next }
+		{ print }
+		END { if (proc) print "command = sleep 300"; else if (!internal) print "command = true" }
+		/^type *= *internal/ { internal = 1 }
+	' "$f" > "$SY/$n"
+done
+for n in boot early-fs; do sed -i '/^command = /d' "$SY/$n"; done
+GINIT_SERVICE_DIR=$SY "$GINIT" -c > "$T/sys2.log" 2>&1; eq "stand-in set loads" "$?" 0
+daemon_old=$daemon
+[ "$daemon" -gt 0 ] && { "$ctl" shutdown > /dev/null 2>&1; wait "$daemon" 2> /dev/null; daemon=0; }
+GINIT_SERVICE_DIR=$SY "$GINIT" -q > "$T/sysd.log" 2>&1 &
+daemon=$!
+for ((i = 0; i < 100; i++)); do "$ctl" ping > /dev/null 2>&1 && break; sleep 0.05; done
+GINIT_SERVICE_DIR=$SY waitfor boot started 10; eq "boot is started" "$(state boot)" started
+for n in mount-proc early-fs udevd udev-settle fsck root-rw local-fs swap dbus network getty-tty1 syslog; do
+	eq "$n is started" "$(state $n)" started
+done
+eq "sshd is not wanted by boot" "$(state sshd)" stopped
+eq "grub-mkconfig is not wanted by boot" "$(state grub-mkconfig)" stopped
+"$ctl" start grub-mkconfig > /dev/null; eq "grub-mkconfig starts on demand" "$?" 0
+"$ctl" stop udevd > /dev/null
+eq "stopping udevd stops what needs it: fsck" "$(state fsck)" stopped
+eq "and local-fs" "$(state local-fs)" stopped
+eq "and a dependent of local-fs: dbus (via tmpfiles)" "$(state dbus)" stopped
+eq "boot goes down too (it hard-depends on swap)" "$(state boot)" stopped
+"$ctl" shutdown > /dev/null; wait "$daemon" 2> /dev/null; daemon=0
+: "$daemon_old"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

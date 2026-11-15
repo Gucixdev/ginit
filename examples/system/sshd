@@ -1,0 +1,5 @@
+# off by default: boot does not want it; ginitctl start sshd
+type = process
+command = sshd -D -e
+depends-on = network-online
+restart = yes

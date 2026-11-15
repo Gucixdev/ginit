@@ -1,0 +1,4 @@
+type = process
+command = syslogd -n
+depends-on = local-fs
+restart = yes

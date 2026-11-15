@@ -1,0 +1,4 @@
+# load the modules listed in /etc/modules-load.d/*.conf and /etc/modules (no systemd needed); none listed is fine
+type = scripted
+command = sh -c "cat /etc/modules-load.d/*.conf /etc/modules 2> /dev/null | grep -v '^[#;]' | xargs -r modprobe -a -b -q; true"
+depends-on = early-fs

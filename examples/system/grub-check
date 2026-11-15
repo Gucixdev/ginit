@@ -1,0 +1,4 @@
+# syntax-check the config GRUB will read; run before a reboot after editing it
+type = scripted
+command = grub-script-check /boot/grub/grub.cfg
+depends-on = local-fs

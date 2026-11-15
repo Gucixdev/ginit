@@ -1,0 +1,7 @@
+# the pseudo file systems together
+type = internal
+depends-on = mount-proc
+depends-on = mount-sys
+depends-on = mount-dev
+depends-on = mount-devpts
+depends-on = mount-run

@@ -18,13 +18,79 @@
 
 static void gi_usage(FILE *f)
 {
-    fputs("usage: ginit [-u] [-q] [-d DIR[:DIR]] [-p SOCKET] [SERVICE...]\n"
+    fputs("usage: ginit [-u] [-q] [-c] [-d DIR[:DIR]] [-p SOCKET] [SERVICE...]\n"
           "  -u  user mode: services from ~/.config/ginit.d and ~/.config/dinit.d (the default when not root/PID 1)\n"
           "  -q  no log lines\n"
+          "  -c  check: load the named services (default: all in the directories), start nothing, exit 1 on errors\n"
           "  -d  service directories (also $GINIT_SERVICE_DIR), first match wins\n"
-          "  -p  control socket (also $GINIT_SOCKET)\n"
-          "Starts the named services (default: boot) and runs until told to shut down.\n"
+          "  -p  control socket (also $GINIT_SOCKET)\n", f);
+    fputs("Starts the named services (default: boot) and runs until told to shut down.\n"
           "Control it with ginitctl.\n", f);
+}
+
+/* ginit -c: load services without starting anything and report what would not work. With no names, every file in the
+ * service directories is checked. Hard failures (unreadable file, refused key, missing hard dependency, cycle) make the
+ * exit status 1; a soft dependency or ordering name that does not exist is only a note, because dinit skips those too. */
+static int gi_check(const char **names, int nnames)
+{
+    static char *all[GI_MAXSVC];
+    int nall = 0, i, j, k, idx, rc = 0, loaded = 0;
+    DIR *d;
+    struct dirent *e;
+
+    if (nnames > 0) {
+        for (i = 0; i < nnames; i++) {
+            all[nall++] = gi_strdup(names[i]);
+        }
+    } else {
+        for (i = 0; i < gi_ndirs; i++) {
+            d = opendir(gi_dirs[i]);
+            if (d == NULL) {
+                continue;
+            }
+            while ((e = readdir(d)) != NULL && nall < GI_MAXSVC) {
+                if (e->d_name[0] == '.' || !gi_valid_name(e->d_name)) {
+                    continue;
+                }
+                for (j = 0; j < nall && strcmp(all[j], e->d_name) != 0; j++) {
+                    ;
+                }
+                if (j == nall) {
+                    all[nall++] = gi_strdup(e->d_name);
+                }
+            }
+            closedir(d);
+        }
+    }
+    for (i = 0; i < nall; i++) {
+        idx = gi_load(all[i]);
+        if (idx < 0) {
+            printf("error: %s: %s\n", all[i], gi_load_err);
+            rc = GI_FAIL;
+        } else if (gi_cycle_from(idx)) {
+            printf("error: %s: dependency cycle\n", all[i]);
+            rc = GI_FAIL;
+        }
+    }
+    for (i = 0; i < gi_nsvc; i++) {
+        const char *kind[3];
+        char **list[3];
+        int cnt[3];
+
+        loaded++;
+        kind[0] = "waits-for"; list[0] = gi_raw[i].soft; cnt[0] = gi_raw[i].nsoft;
+        kind[1] = "after"; list[1] = gi_raw[i].after; cnt[1] = gi_raw[i].nafter;
+        kind[2] = "before"; list[2] = gi_raw[i].before; cnt[2] = gi_raw[i].nbefore;
+        for (k = 0; k < 3; k++) {
+            for (j = 0; j < cnt[k]; j++) {
+                if (gi_lookup(list[k][j]) < 0) {
+                    printf("note: %s: %s %s: no such service (skipped)\n", gi_svc[i].name, kind[k], list[k][j]);
+                }
+            }
+        }
+    }
+    printf("%d service%s checked, %s\n", loaded, loaded == 1 ? "" : "s", rc == 0 ? "no errors" : "errors found");
+    return rc;
 }
 
 static void gi_drain_signals(void)
@@ -71,7 +137,7 @@ static int gi_daemon(int argc, char **argv)
     int user_mode = getpid() != 1 && getuid() != 0, i, n;
     const char *sock = NULL;
     const char *boot[16];
-    int nboot = 0;
+    int nboot = 0, check = 0;
     struct pollfd pf[2 + GI_MAXCLIENT];
     int map[2 + GI_MAXCLIENT];
     int idx;
@@ -81,6 +147,8 @@ static int gi_daemon(int argc, char **argv)
             user_mode = 1;
         } else if (strcmp(argv[i], "-q") == 0) {
             gi_quiet = 1;
+        } else if (strcmp(argv[i], "-c") == 0) {
+            check = 1;
         } else if (strcmp(argv[i], "-d") == 0 && i + 1 < argc) {
             setenv("GINIT_SERVICE_DIR", argv[++i], 1);
         } else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
@@ -95,6 +163,10 @@ static int gi_daemon(int argc, char **argv)
             boot[nboot++] = argv[i];
         }
     }
+    if (check) {
+        gi_dirs_init(user_mode);
+        return gi_check(boot, nboot);
+    }
     if (nboot == 0) {
         boot[nboot++] = "boot";
     }
@@ -106,6 +178,8 @@ static int gi_daemon(int argc, char **argv)
     gi_signals_init();
     gi_listen(sock);
     if (getpid() == 1) {
+        /* the kernel starts init with no PATH; services use bare command names */
+        setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 0);
         setsid();
         gi_log("pid 1, service directories: %s ...", gi_ndirs > 0 ? gi_dirs[0] : "(none)");
     }

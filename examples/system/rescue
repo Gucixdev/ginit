@@ -1,0 +1,5 @@
+# single-user shell on the console for when boot is broken: ginit rescue
+type = process
+command = sulogin
+depends-on = early-fs
+options = runs-on-console

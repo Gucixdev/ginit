@@ -1,0 +1,3 @@
+# the pseudo file systems the kernel offers; every later service needs them
+type = scripted
+command = mount -t proc -o nosuid,nodev,noexec proc /proc

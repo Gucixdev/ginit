@@ -1,0 +1,5 @@
+# keep entropy across boots: restore at start, save at stop
+type = scripted
+command = sh -c 'cat /var/lib/random-seed > /dev/urandom 2> /dev/null; true'
+stop-command = sh -c 'dd if=/dev/urandom of=/var/lib/random-seed bs=512 count=1 2> /dev/null'
+depends-on = local-fs

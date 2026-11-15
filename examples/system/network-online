@@ -1,0 +1,5 @@
+# done when a default route exists, or after 30 seconds (waits-for, so a failure does not block the boot)
+type = scripted
+command = nm-online -q -t 30
+depends-on = network
+start-timeout = 40

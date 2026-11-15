@@ -1,0 +1,5 @@
+# check the file systems that /etc/fstab marks for it, read-only root first; exit codes 0 and 1 count as success
+type = scripted
+command = fsck -A -T -a -t noopts=_netdev
+depends-on = udev-settle
+start-timeout = 600

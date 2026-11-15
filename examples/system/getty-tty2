@@ -1,0 +1,5 @@
+type = process
+command = agetty tty2 linux
+depends-on = local-fs
+restart = yes
+restart-delay = 1

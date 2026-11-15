@@ -1,0 +1,5 @@
+type = process
+command = chronyd -d
+depends-on = network
+restart = on-failure
+restart-delay = 5

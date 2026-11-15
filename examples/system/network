@@ -1,0 +1,7 @@
+# NetworkManager in the foreground; use dhcpcd instead on a box without it (replace this file, name stays)
+type = process
+command = NetworkManager --no-daemon
+depends-on = dbus
+waits-for = udev-settle
+restart = on-failure
+restart-delay = 2

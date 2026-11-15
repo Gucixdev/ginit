@@ -1,0 +1,12 @@
+# the default service: file systems, devices, logging, bus, network, time, login prompts
+type = internal
+depends-on = swap
+depends-on = hostname
+waits-for = random-seed
+waits-for = klogd
+waits-for = elogind
+waits-for = chrony
+waits-for = crond
+waits-for = getty-tty1
+waits-for = getty-tty2
+waits-for = network-online

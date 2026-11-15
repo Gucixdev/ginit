@@ -1,0 +1,6 @@
+# device manager; udevadm settle waits until the first events are handled
+type = process
+command = udevd
+depends-on = early-fs
+waits-for = modules
+restart = on-failure

@@ -1,0 +1,4 @@
+type = scripted
+command = udevadm settle --timeout=30
+depends-on = udev-trigger
+start-timeout = 40

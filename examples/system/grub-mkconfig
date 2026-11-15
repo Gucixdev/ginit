@@ -1,0 +1,5 @@
+# regenerate /boot/grub/grub.cfg from /etc/default/grub and /etc/grub.d; not wanted by boot, run by hand: ginitctl start grub-mkconfig
+type = scripted
+command = grub-mkconfig -o /boot/grub/grub.cfg
+depends-on = local-fs
+start-timeout = 120

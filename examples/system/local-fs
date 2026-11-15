@@ -1,0 +1,5 @@
+# the rest of /etc/fstab; unmounted again on shutdown, after every service that depends on it has stopped
+type = scripted
+command = mount -a -t nosmbfs,nonfs,nonfs4,nocifs
+stop-command = umount -a -r -t nosmbfs,nonfs,nonfs4,nocifs
+depends-on = root-rw

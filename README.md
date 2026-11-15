@@ -15,7 +15,9 @@ Do not point a boot loader at it yet without a rescue entry.
 ./run                       ./build, test, then boot the example services
 ./install [-rebuild]        ginit, ginitctl, dinitctl into ~/.local/bin (PREFIX=/usr/local, DESTDIR=... also work)
 
-ginit [-u] [-q] [-d DIR[:DIR]] [-p SOCKET] [SERVICE...]     SERVICE defaults to "boot"
+ginit [-u] [-q] [-c] [-d DIR[:DIR]] [-p SOCKET] [SERVICE...]     SERVICE defaults to "boot"
+ginit -c [-d DIR] [SERVICE...]     check only: load the services (default: every file in the directories), start nothing;
+                                   exit 1 on a refused key, missing hard dependency or cycle; missing soft names are notes
 ginitctl list | status [NAME] | start [-n] NAME | stop [-n] NAME | restart [-n] NAME | shutdown [quit|reboot|poweroff]
 ```
 
@@ -31,7 +33,14 @@ socket is `$XDG_RUNTIME_DIR/ginit.socket`. As root or PID 1: `/etc/ginit.d`, `/e
 ## Service files
 
 A file named after the service, `key = value` lines, `#` comments (at line start or after a blank), `key += value` adds
-to a list. `examples/ginit.d` has three.
+to a list. `examples/ginit.d` has three small ones.
+
+`examples/system/` is a full boot sequence in the same format, 33 services (copy it to `/etc/ginit.d`): pseudo file systems,
+hostname, modules, udevd with trigger and settle, fsck, remount rw, `mount -a`, swap, random seed, tmpfiles, syslog, dbus,
+elogind, NetworkManager, chrony, cron, getty on tty1 and tty2, sshd (not wanted by `boot`), `rescue` (sulogin), and the
+GRUB helpers `grub-mkconfig`, `grub-check` and `grub-reboot-once`, which `boot` does not start: `ginitctl start grub-mkconfig`.
+The commands are the usual ones (util-linux, kmod, udev, NetworkManager...); swap a file for your own, the names stay.
+The test starts the whole set with stand-in commands; the real commands have **not** been run on a machine.
 
 | key | meaning |
 |---|---|

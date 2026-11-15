@@ -1,0 +1,7 @@
+type = process
+command = agetty --noclear tty1 linux
+depends-on = local-fs
+waits-for = elogind
+restart = yes
+restart-delay = 1
+options = runs-on-console
