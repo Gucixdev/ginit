@@ -4,8 +4,8 @@
 # refused there (no CAP_SYS_BOOT on the host), which is the point: the machine is safe; that last syscall stays untested.
 # Skips (exit 0) without unshare or when user namespaces are off.   usage: sh tests/pid1
 cd "$(dirname "$0")/.." || exit 1
-BIN=${BIN:-$PWD/build}
-[ -x "$BIN/ginit" ] && [ -x "$BIN/ginitctl" ] || { echo "build first: make"; exit 1; }
+BIN=${BIN:-$PWD/out}
+[ -x "$BIN/ginit" ] && [ -x "$BIN/ginitctl" ] || { echo "build first: ./build"; exit 1; }
 command -v unshare > /dev/null && unshare -Urpf --mount-proc true 2> /dev/null || { echo "pid1 tests: no user/pid namespaces, skipped"; exit 0; }
 
 T=$(mktemp -d) || exit 1

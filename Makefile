@@ -1,5 +1,5 @@
 # ginit build. One translation unit (src/main.c includes the rest), C89, no dependencies beyond libc.
-#   make          build/ginit and the ginitctl link
+#   make          out/ginit and the ginitctl link
 #   make test     the pedantic C89 build under gcc and clang, then tests/run against a sanitizer build and the normal one
 #   make install  PREFIX (default /usr/local), DESTDIR for packagers: ginit, ginitctl, dinitctl
 CC ?= gcc
@@ -9,29 +9,29 @@ CFLAGS ?= -O2
 
 SRC = $(wildcard src/*.c src/*.h)
 
-all: build/ginit
+all: out/ginit
 
-build:
-	mkdir -p build
+out:
+	mkdir -p out
 
-build/ginit: $(SRC) | build
+out/ginit: $(SRC) | out
 	$(CC) $(STD) $(CFLAGS) src/main.c -o $@
-	ln -sf ginit build/ginitctl
+	ln -sf ginit out/ginitctl
 
-test: build/ginit
-	@command -v clang > /dev/null && clang $(STD) -O2 src/main.c -o build/ginit-clang && echo "clang build ok" || echo "clang not installed: skipped"
-	$(CC) $(STD) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined src/main.c -o build/ginit-san
-	ASAN_OPTIONS=detect_leaks=0 tests/run build/ginit-san
-	tests/run build/ginit
+test: out/ginit
+	@command -v clang > /dev/null && clang $(STD) -O2 src/main.c -o out/ginit-clang && echo "clang build ok" || echo "clang not installed: skipped"
+	$(CC) $(STD) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined src/main.c -o out/ginit-san
+	ASAN_OPTIONS=detect_leaks=0 tests/run out/ginit-san
+	tests/run out/ginit
 	sh tests/pid1
 
-install: build/ginit
+install: out/ginit
 	install -d $(DESTDIR)$(PREFIX)/bin
-	install -m 755 build/ginit $(DESTDIR)$(PREFIX)/bin/ginit
+	install -m 755 out/ginit $(DESTDIR)$(PREFIX)/bin/ginit
 	ln -sf ginit $(DESTDIR)$(PREFIX)/bin/ginitctl
 	ln -sf ginit $(DESTDIR)$(PREFIX)/bin/dinitctl
 
 clean:
-	rm -rf build
+	rm -rf out
 
 .PHONY: all test install clean

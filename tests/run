@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # tests/run - drive a real ginit in user mode: services are real processes (sleep, sh), the daemon runs on a socket
-# in a temp directory, nothing touches the system. Usage: tests/run [PATH-TO-ginit]   (default build/ginit)
+# in a temp directory, nothing touches the system. Usage: tests/run [PATH-TO-ginit]   (default out/ginit)
 set -u
 cd "$(dirname "$0")/.." || exit 2
-GINIT=$(readlink -f "${1:-build/ginit}")
+GINIT=$(readlink -f "${1:-out/ginit}")
 [ -x "$GINIT" ] || { echo "tests/run: $GINIT is not built (make)" >&2; exit 2; }
 
 T=$(mktemp -d "${TMPDIR:-/tmp}/ginit-test.XXXXXX")

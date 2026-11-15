@@ -11,8 +11,9 @@ Do not point a boot loader at it yet without a rescue entry.
 ## Use
 
 ```
-./run                       build, test, then boot the example services
-./install                   ginit, ginitctl, dinitctl into ~/.local/bin (PREFIX=/usr/local, DESTDIR=... also work)
+./build                     compile what changed (BUILD_FORCE=1 ./build: everything into out/)
+./run                       ./build, test, then boot the example services
+./install [-rebuild]        ginit, ginitctl, dinitctl into ~/.local/bin (PREFIX=/usr/local, DESTDIR=... also work)
 
 ginit [-u] [-q] [-d DIR[:DIR]] [-p SOCKET] [SERVICE...]     SERVICE defaults to "boot"
 ginitctl list | status [NAME] | start [-n] NAME | stop [-n] NAME | restart [-n] NAME | shutdown [quit|reboot|poweroff]

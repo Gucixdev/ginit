@@ -29,7 +29,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-stock=$root/build/ginit
+stock=$root/out/ginit
 # raised-limit copy for the big sizes
 cp -r src "$T/src"
 sed -i 's/#define GI_MAXSVC 512/#define GI_MAXSVC 4096/' "$T/src/base.h"
