@@ -95,7 +95,7 @@ svc needsbad "type = process" "command = sleep 300" "depends-on = bad"
 svc softbad "type = process" "command = sleep 300" "waits-for = bad"
 svc nocmd "type = process"
 svc nosuchexec "type = process" "command = /nonexistent/program"
-svc badkey "type = process" "command = true" "run-as = root"
+svc badkey "type = process" "command = true" "rlimit-nofile = 10"
 svc cyc1 "type = internal" "depends-on = cyc2"
 svc cyc2 "type = internal" "depends-on = cyc1"
 "$ctl" start bad > /dev/null 2>&1; eq "a failing start command: exit 1" "$?" 1
@@ -110,7 +110,7 @@ check "it says so" grep -q "no such service" "$T/out"
 check "and says what" grep -q "needs a command" "$T/out"
 "$ctl" start nosuchexec > "$T/out" 2>&1; eq "a program that is not there fails the start" "$?" 1
 "$ctl" start badkey > "$T/out" 2>&1; eq "an unsupported key is refused" "$?" 1
-check "with the key and line" grep -q "run-as.*line 3" "$T/out"
+check "with the key and line" grep -q "rlimit-nofile.*line 3" "$T/out"
 svc halfdep "type = internal" "depends-on = ok1" "depends-on = nosuch"
 svc ok1 "type = internal"
 "$ctl" start halfdep > "$T/out" 2>&1; eq "a missing hard dependency refuses the start" "$?" 1
@@ -215,14 +215,31 @@ kill $strays 2> /dev/null     # a daemon killed with SIGKILL cannot stop its ser
 boot
 "$ctl" ping > /dev/null; eq "a stale socket file is replaced" "$?" 0
 
+echo "== run-as"
+ME=$(id -un)
+svc ra-me "type = process" "command = sh -c 'id -un > $T/ra-me.out; exec sleep 300'" "run-as = $ME"
+svc ra-none "type = process" "command = sleep 300" "run-as = no-such-user-ginit-test"
+svc ra-bad "type = process" "command = sleep 300" "run-as = a:b"
+boot
+"$ctl" start ra-me > /dev/null; eq "run-as the current user starts" "$?" 0
+for ((i = 0; i < 60; i++)); do [ -s "$T/ra-me.out" ] && break; sleep 0.05; done
+eq "and runs as that user" "$(cat "$T/ra-me.out" 2> /dev/null)" "$ME"
+"$ctl" start ra-none > /dev/null 2>&1; eq "an unknown user fails the start" "$?" 1
+eq "and the service is failed" "$(state ra-none)" failed
+"$ctl" start ra-bad > /dev/null 2>&1; eq "run-as with a colon is refused at load" "$?" 1
+if [ "$(id -u)" -ne 0 ]; then
+	svc ra-root "type = process" "command = sleep 300" "run-as = root"
+	"$ctl" start ra-root > /dev/null 2>&1; eq "switching to another user without being root fails" "$?" 1
+fi
+
 echo "== ginit -c (check mode)"
 CK=$T/check; mkdir -p "$CK"
 printf '%s\n' "type = process" "command = x" "depends-on = b" > "$CK/a"
 printf '%s\n' "type = process" "command = x" "depends-on = a" "waits-for = ghost" > "$CK/b"
-printf '%s\n' "type = process" "command = x" "run-as = root" > "$CK/c"
+printf '%s\n' "type = process" "command = x" "rlimit-nofile = 10" > "$CK/c"
 out=$("$GINIT" -c -d "$CK" 2>&1); eq "check exits 1 on errors" "$?" 1
 check "reports the cycle" grep -q "error: a: dependency cycle" <<< "$out"
-check "reports the refused key with its line" grep -q "error: c: .*run-as (line 3)" <<< "$out"
+check "reports the refused key with its line" grep -q "error: c: .*rlimit-nofile (line 3)" <<< "$out"
 check "a missing soft dependency is only a note" grep -q "note: b: waits-for ghost" <<< "$out"
 out=$("$GINIT" -c -d "$CK" c 2>&1); eq "named check: one bad service" "$?" 1
 printf '%s\n' "type = process" "command = x" > "$CK/b"

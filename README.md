@@ -51,10 +51,11 @@ The test starts the whole set with stand-in commands; the real commands have **n
 | `after`, `before` | ordering only, no dependency |
 | `restart` | `yes`, `no`, `on-failure`; `restart-delay` (default 0.2 s); `restart-limit-count` / `-interval` (3 in 10 s) |
 | `start-timeout`, `stop-timeout` | seconds, 0 = none (60 and 10); at the stop timeout the process group gets SIGKILL |
+| `run-as` | user name; ids and groups set in the child before exec (nothing when already that user) |
 | `working-directory`, `logfile`, `env-file` | `KEY=VALUE` lines |
 | `options`, `smooth-recovery`, `term-signal`, `log-type` | accepted, no effect |
 
-Anything else (`run-as`, `socket-listen`, `rlimit-*`, `cgroup`, `capabilities`...) makes the file **refused with the key
+Anything else (`socket-listen`, `rlimit-*`, `cgroup`, `capabilities`...) makes the file **refused with the key
 and line number**, so a service never starts with a setting that was silently dropped.
 
 ## How it decides
@@ -78,7 +79,7 @@ src/main.c      the daemon loop, PID 1 duties, argv[0] dispatch
 tests/run       drives a real daemon in user mode on a temp socket
 ```
 
-Not done: socket activation, run-as, cgroups, `reload`, `enable`/`disable`, service environment commands, a boot
+Not done: socket activation, cgroups, `reload`, `enable`/`disable`, service environment commands, a boot
 sequence for a real system (mounting is the job of a scripted `boot` service you write).
 
 ## More

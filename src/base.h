@@ -7,12 +7,15 @@
 #define GI_BASE_H
 
 #define _XOPEN_SOURCE 700
+#define _DEFAULT_SOURCE 1   /* initgroups */
 
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <poll.h>
+#include <pwd.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stddef.h>
@@ -118,6 +121,7 @@ typedef struct Svc {
     char *workdir;
     char *logfile;
     char *pidfile;
+    char *runas;        /* run-as: user name, resolved in the child before exec */
     char **env;         /* KEY=VALUE lines of env-file, NULL-terminated, or NULL */
     int restart;
     int restart_delay_ms;

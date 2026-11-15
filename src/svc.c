@@ -13,9 +13,10 @@
  *   restart-delay    seconds (default 0.2)
  *   restart-limit-count, restart-limit-interval    at most COUNT restarts in INTERVAL seconds (3 in 10)
  *   start-timeout, stop-timeout   seconds, 0 = none (defaults 60 and 10)
+ *   run-as           user name: groups and ids are set in the child before exec (nothing when it is already that user)
  *   working-directory, logfile, pid-file (bgprocess), env-file (KEY=VALUE lines)
  *   options          accepted and ignored: runs-on-console, starts-on-console, shares-console, ...
- * Not supported (the file is refused with the line number): run-as and the socket, cgroup, rlimit and capability keys.
+ * Not supported (the file is refused with the line number): the socket, cgroup, rlimit and capability keys.
  * Dependencies are resolved after the parse; a service named by a dependency is loaded in turn. */
 
 /* names that still have to be resolved to indices, per service */
@@ -407,6 +408,13 @@ static int gi_parse_file(Svc *S, Raw *R, const char *path, const char *dir)
             S->workdir = gi_strdup(val);
         } else if (strcmp(key, "logfile") == 0) {
             S->logfile = gi_strdup(val);
+        } else if (strcmp(key, "run-as") == 0) {
+            if (val[0] == '\0' || strchr(val, ':') != NULL || strchr(val, ' ') != NULL) {
+                gi_set_err("run-as takes one user name", val, no);
+                fclose(f);
+                return 0;
+            }
+            S->runas = gi_strdup(val);
         } else if (strcmp(key, "pid-file") == 0) {
             S->pidfile = gi_strdup(val);
         } else if (strcmp(key, "env-file") == 0) {

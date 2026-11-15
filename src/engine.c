@@ -144,6 +144,28 @@ static int gi_spawn(Svc *S, char **argv, int *pid_out, int *err)
                 close(fd);
             }
         }
+        if (S->runas != NULL) {
+            struct passwd *pw = getpwnam(S->runas);
+
+            e = ENOENT;
+            if (pw == NULL) {
+                if (write(ep[1], &e, sizeof(e)) < 0) {
+                    _exit(127);
+                }
+                _exit(127);
+            }
+            if (pw->pw_uid != geteuid() &&
+                (initgroups(pw->pw_name, pw->pw_gid) < 0 || setgid(pw->pw_gid) < 0 || setuid(pw->pw_uid) < 0)) {
+                e = errno;
+                if (write(ep[1], &e, sizeof(e)) < 0) {
+                    _exit(127);
+                }
+                _exit(127);
+            }
+            setenv("USER", pw->pw_name, 1);
+            setenv("LOGNAME", pw->pw_name, 1);
+            setenv("HOME", pw->pw_dir, 1);
+        }
         if (S->workdir != NULL && chdir(S->workdir) < 0) {
             e = errno;
             if (write(ep[1], &e, sizeof(e)) < 0) {
