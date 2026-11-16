@@ -393,14 +393,15 @@ static int gi_parse_file(Svc *S, Raw *R, const char *path, const char *dir)
                 fclose(f);
                 return 0;
             }
+            /* whole seconds, rounded up: "0.5" must not become 0, which means no timeout at all */
             if (strcmp(key, "restart-delay") == 0) {
                 S->restart_delay_ms = ms;
             } else if (strcmp(key, "start-timeout") == 0) {
-                S->start_timeout_s = ms / 1000;
+                S->start_timeout_s = (ms + 999) / 1000;
             } else if (strcmp(key, "stop-timeout") == 0) {
-                S->stop_timeout_s = ms / 1000;
+                S->stop_timeout_s = (ms + 999) / 1000;
             } else if (strcmp(key, "restart-limit-interval") == 0) {
-                S->restart_interval_s = ms / 1000;
+                S->restart_interval_s = (ms + 999) / 1000;
             } else {
                 S->restart_max = ms / 1000;
             }
