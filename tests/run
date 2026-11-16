@@ -227,6 +227,9 @@ kill -9 "$daemon"; wait "$daemon" 2> /dev/null; daemon=0
 kill $strays 2> /dev/null     # a daemon killed with SIGKILL cannot stop its services
 boot
 "$ctl" ping > /dev/null; eq "a stale socket file is replaced" "$?" 0
+echo keep > "$T/notsock"
+GINIT_SOCKET=$T/notsock timeout 2 "$GINIT" -q > "$T/notsock.log" 2>&1; eq "a file at the socket path is refused" "$?" 1
+eq "and the file is not removed" "$(cat "$T/notsock" 2> /dev/null)" keep
 
 echo "== run-as"
 ME=$(id -un)

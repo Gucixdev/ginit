@@ -64,9 +64,14 @@ static void gi_listen(const char *path)
     struct sockaddr_un a;
     int fd, probe;
     mode_t old;
+    struct stat st;
 
     if (gi_addr(&a, path) < 0) {
         gi_die("control socket path too long");
+    }
+    if (lstat(path, &st) == 0 && !S_ISSOCK(st.st_mode)) {   /* only a stale socket is removed below, never a file */
+        fprintf(stderr, "ginit: %s exists and is not a socket\n", path);
+        exit(GI_FAIL);
     }
     probe = socket(AF_UNIX, SOCK_STREAM, 0);
     if (probe >= 0) {
