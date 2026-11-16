@@ -515,7 +515,7 @@ static void gi_poll_one(int i)
             }
             fclose(f);
         }
-        if (v > 1 && kill((pid_t)v, 0) == 0) {
+        if (v > 1 && v <= 2147483647L && kill((pid_t)v, 0) == 0) {   /* a larger number would wrap to some other pid */
             S->pid = (int)v;
             S->bg = 1;
             S->state = S_STARTED;

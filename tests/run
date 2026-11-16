@@ -149,6 +149,13 @@ bgpid=$(pid_of daemonish)
 eq "the pid comes from the file" "$bgpid" "$(cat "$T/bg.pid")"
 "$ctl" stop daemonish > /dev/null; eq "bgprocess stop" "$?" 0
 check "the process is gone" bash -c "! kill -0 $bgpid"
+sleep 300 &
+victim=$!
+svc bigpid "type = bgprocess" "command = sh -c 'echo $((4294967296 + victim)) > $T/big.pid'" "pid-file = $T/big.pid" \
+	"start-timeout = 1"
+"$ctl" start bigpid > /dev/null 2>&1; eq "a pid-file number past the pid range is not taken for a pid" "$?" 1
+check "and the process it would wrap to is left alone" kill -0 "$victim"
+kill "$victim" 2> /dev/null
 
 echo "== scripted with a stop command"
 svc scr "type = scripted" "command = sh -c 'echo on >> $T/scr'" "stop-command = sh -c 'echo off >> $T/scr'"
